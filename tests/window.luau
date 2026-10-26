@@ -278,6 +278,59 @@ test("malformed installer keys are dropped, not saved", function()
 	eq(#h.pushes, 0, "pushes")
 end)
 
+-- Two windows share one kv store and one keychain, like two Tern windows on the same Mac.
+local function long_command(h: any)
+	h.event("command_finished", { pane = 3, line = "make test", status = 0, took_ms = 120000 })
+end
+
+test("keys set up in one window are used by a window that was already open", function()
+	local kv, secrets = {}, {}
+	local a = harness({ kv = kv, secrets = secrets })
+	local b = harness({ kv = kv, secrets = secrets })
+	long_command(b) -- no keys anywhere yet
+	eq(#b.pushes, 0, "pushes without keys")
+	kv.pending_keys = { token = TOKEN, user = USER }
+	a.advance(2000) -- window A imports them
+	eq(#a.pushes, 1, "A's test push")
+	long_command(b)
+	eq(#b.pushes, 1, "B's push with the new keys")
+	eq(b.pushes[1].token, TOKEN, "B's token")
+	eq(b.pushes[1].user, USER, "B's user")
+end)
+
+test("a window without keys doesn't claim an event that a window with keys can send", function()
+	local kv, secrets = {}, {}
+	local a = harness({ kv = kv, secrets = secrets })
+	local b = harness({ kv = kv, secrets = secrets })
+	kv.pending_keys = { token = TOKEN, user = USER }
+	a.advance(2000)
+	secrets.token, secrets.user = nil, nil -- B's stale view: pretend its keychain read fails
+	local saved_rev = kv.creds_rev
+	kv.creds_rev = saved_rev + 1
+	long_command(b) -- B refreshes, finds no keys, and must leave the event alone
+	secrets.token, secrets.user = TOKEN, USER
+	long_command(a) -- A refreshes too and sends it
+	eq(#b.pushes, 0, "B pushes")
+	eq(#a.pushes, 2, "A pushes (test + command)")
+end)
+
+test("changed keys reach every open window", function()
+	local kv, secrets = {}, {}
+	local a = harness({ kv = kv, secrets = secrets })
+	local b = harness({ kv = kv, secrets = secrets })
+	kv.pending_keys = { token = TOKEN, user = USER }
+	a.advance(2000)
+	long_command(b)
+	local NEW_USER = string.rep("c", 30)
+	kv.pending_keys = { token = TOKEN, user = NEW_USER }
+	kv.recent = nil -- let the same command be sent again
+	a.advance(2000)
+	long_command(b)
+	eq(#b.pushes, 2, "B pushes")
+	eq(b.pushes[1].user, USER, "first push")
+	eq(b.pushes[2].user, NEW_USER, "after the change")
+end)
+
 print(`{count - failures}/{count} passed`)
 if failures > 0 then
 	process.exit(1)

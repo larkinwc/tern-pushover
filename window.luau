@@ -70,6 +70,34 @@ local function load_creds(done: ((Credentials?, WindowCx?) -> ())?)
 	end)
 end
 
+-- Every window caches the keys. Whenever a window saves or forgets them it bumps kv "creds_rev", and
+-- each window re-reads the keychain before using its cache once that number moved.
+local creds_rev: number? = nil -- the revision `creds` reflects; nil until the first read
+
+local function stored_rev(): number
+	local ok, rev = pcall(tern.kv.get, "creds_rev")
+	return if ok and type(rev) == "number" then rev else 0
+end
+
+local function bump_rev()
+	local rev = stored_rev() + 1
+	pcall(tern.kv.set, "creds_rev", rev)
+	creds_rev = rev
+end
+
+-- Runs `fn` once `creds` matches the keys saved last, by any window.
+local function with_current_creds(fn: () -> ())
+	local rev = stored_rev()
+	if rev == creds_rev then
+		fn()
+		return
+	end
+	load_creds(function()
+		creds_rev = rev
+		fn()
+	end)
+end
+
 -- Sending -------------------------------------------------------------------------------------------
 
 local function report(why: string, cx: WindowCx?)
@@ -144,11 +172,24 @@ local function claim(key: string): boolean
 end
 
 local function notify(key: string, msg: Message, s: Settings)
-	if s.paused or not claim(key) then
+	if s.paused then
 		return
 	end
-	when_allowed(s, function()
-		deliver(msg)
+	with_current_creds(function()
+		if creds == nil then
+			-- Don't claim it: a window that has keys may still send it.
+			if not warned_no_keys then
+				warned_no_keys = true
+				tern.log.warn("pushover: No Pushover keys yet: run “Pushover: Set up” from the palette.")
+			end
+			return
+		end
+		if not claim(key) then
+			return
+		end
+		when_allowed(s, function()
+			deliver(msg)
+		end)
 	end)
 end
 
@@ -300,18 +341,20 @@ end)
 
 -- Sends a test push; toasts the outcome when there's a window to toast in. `done` gets the failure, if any.
 local function send_test(cx: WindowCx?, done: ((why: string?) -> ())?)
-	deliver({ title = "Tern", message = "Test notification from the Pushover plugin." }, function(why, fresh)
-		local target = fresh or cx
-		if target ~= nil then
-			if why == nil then
-				target:toast("success", "Pushover: test sent", "Check your phone.")
-			else
-				target:toast("error", "Pushover: test failed", why)
+	with_current_creds(function()
+		deliver({ title = "Tern", message = "Test notification from the Pushover plugin." }, function(why, fresh)
+			local target = fresh or cx
+			if target ~= nil then
+				if why == nil then
+					target:toast("success", "Pushover: test sent", "Check your phone.")
+				else
+					target:toast("error", "Pushover: test failed", why)
+				end
 			end
-		end
-		if done ~= nil then
-			done(why)
-		end
+			if done ~= nil then
+				done(why)
+			end
+		end)
 	end)
 end
 
@@ -325,6 +368,7 @@ local function save_creds(candidate: Credentials, done: (err: string?, cx: Windo
 		tern.secrets.set("user", candidate.user):next(function(_, err2, cx2)
 			if err2 == nil then
 				creds = candidate
+				bump_rev()
 			end
 			done(err2, cx2)
 		end)
@@ -509,7 +553,8 @@ tern.command({
 			elseif id == "forget" then
 				tern.secrets.set("token", nil):next(function()
 					tern.secrets.set("user", nil):next(function(_, _, cx2)
-						creds = nil;
+						creds = nil
+						bump_rev();
 						(cx2 or target):toast("info", "Pushover: keys removed from the keychain")
 					end)
 				end)
@@ -534,7 +579,7 @@ tern.command({
 
 -- Start ---------------------------------------------------------------------------------------------
 
-load_creds(function()
+with_current_creds(function()
 	creds_loaded = true
 	import_pending(nil)
 end)
