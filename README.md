@@ -10,17 +10,27 @@ By default it only pushes when you're **away**: the Mac has had no keyboard or m
 
 ## Install
 
-You need a Pushover account and its app on your phone. Pushover is a one-time purchase per platform after a 30-day trial.
+You need a Pushover account and its app on your phone. Pushover is a one-time purchase per platform after a 30-day trial. Before you start, create an application at [pushover.net/apps/build](https://pushover.net/apps/build) (name it "Tern"; the icon is optional) so you have its **API token**. Your **user key** is at the top of [pushover.net](https://pushover.net).
 
-1. Create an application at [pushover.net/apps/build](https://pushover.net/apps/build) (name it "Tern"; the icon is optional) and copy its **API token**.
-2. Copy your **user key** from the top of [pushover.net](https://pushover.net) once signed in.
-3. Install the plugin:
+With Tern open, run:
 
-   ```sh
-   tern plugin install github.com/larkinwc/tern-pushover
-   ```
+```sh
+curl -fsSL https://raw.githubusercontent.com/larkinwc/tern-pushover/main/install.sh | sh
+```
 
-4. In Tern's command palette run **Pushover: Set up** and paste the token, then the user key. Pushover checks the keys, they're saved in the macOS keychain, and a test notification is sent.
+The script:
+
+1. installs the plugin (`tern plugin install github.com/larkinwc/tern-pushover`);
+2. asks for the token and user key, and checks them with Pushover;
+3. hands them to Tern, which saves them in the keychain and sends a test notification to your phone.
+
+To skip the questions, set `PUSHOVER_TOKEN` and `PUSHOVER_USER` first. Run it again to update the plugin or change the keys.
+
+Only Tern can write its own keychain item, so the script leaves the keys in the plugin's data store (`plugin-data/pushover/kv.json`, readable only by you). The first Tern window to see them moves them to the keychain and deletes that copy, usually within a second. If no Tern window is open, they wait there until one starts.
+
+**By hand:** `tern plugin install github.com/larkinwc/tern-pushover`, then run **Pushover: Set up** in Tern's command palette and paste the token, then the user key.
+
+**Uninstall:** `tern plugin remove pushover`, and **Pushover: Settings → Forget my Pushover keys** first if you want the keys out of the keychain.
 
 ## Commands
 

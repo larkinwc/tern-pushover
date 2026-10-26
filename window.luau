@@ -35,6 +35,9 @@ local finished: { [number]: string } = {}
 local creds: Credentials? = nil
 local last_error_toast = -math.huge
 local warned_no_keys = false
+-- Set once the keychain has been read, so keys imported later aren't overwritten by that read.
+local creds_loaded = false
+local import_pending: (cx: WindowCx?) -> () -- defined with the palette commands
 
 -- Settings ------------------------------------------------------------------------------------------
 
@@ -162,6 +165,9 @@ end
 
 local function poll(cx: WindowCx)
 	watchdog.ticked(dog, tern.now())
+	if creds_loaded then
+		import_pending(cx)
+	end
 	local ok, agents = pcall(function()
 		return cx.agents:list()
 	end)
@@ -291,14 +297,68 @@ end)
 
 -- Palette commands ----------------------------------------------------------------------------------
 
-local function send_test(cx: WindowCx)
+-- Sends a test push; toasts the outcome when there's a window to toast in. `done` gets the failure, if any.
+local function send_test(cx: WindowCx?, done: ((why: string?) -> ())?)
 	deliver({ title = "Tern", message = "Test notification from the Pushover plugin." }, function(why, fresh)
 		local target = fresh or cx
-		if why == nil then
-			target:toast("success", "Pushover: test sent", "Check your phone.")
-		else
-			target:toast("error", "Pushover: test failed", why)
+		if target ~= nil then
+			if why == nil then
+				target:toast("success", "Pushover: test sent", "Check your phone.")
+			else
+				target:toast("error", "Pushover: test failed", why)
+			end
 		end
+		if done ~= nil then
+			done(why)
+		end
+	end)
+end
+
+-- Saves both keys to the keychain and starts using them.
+local function save_creds(candidate: Credentials, done: (err: string?, cx: WindowCx?) -> ())
+	tern.secrets.set("token", candidate.token):next(function(_, err, cx)
+		if err ~= nil then
+			done(err, cx)
+			return
+		end
+		tern.secrets.set("user", candidate.user):next(function(_, err2, cx2)
+			if err2 == nil then
+				creds = candidate
+			end
+			done(err2, cx2)
+		end)
+	end)
+end
+
+-- install.sh checks the keys with Pushover, then leaves them in kv "pending_keys", since only Tern
+-- can write its keychain. The first window to see them moves them to the keychain, deletes the
+-- plain-text copy, sends a test push and reports the outcome in kv "import_result" for the script.
+import_pending = function(cx: WindowCx?)
+	local ok, pending = pcall(tern.kv.get, "pending_keys")
+	if not ok or pending == nil or not claim("import") then
+		return
+	end
+	pcall(tern.kv.set, "pending_keys", nil)
+	local function result(why: string?)
+		pcall(tern.kv.set, "import_result", { ok = why == nil, error = why, at = os.time() })
+	end
+	local token = if type(pending) == "table" then pending.token else nil
+	local user = if type(pending) == "table" then pending.user else nil
+	if
+		type(token) ~= "string"
+		or type(user) ~= "string"
+		or not pushover.looks_like_key(token)
+		or not pushover.looks_like_key(user)
+	then
+		result("the installer left malformed keys")
+		return
+	end
+	save_creds({ token = token, user = user }, function(err, fresh)
+		if err ~= nil then
+			result("saving to the keychain failed: " .. err)
+			return
+		end
+		send_test(fresh or cx, result)
 	end)
 end
 
@@ -339,20 +399,13 @@ tern.command({
 						target:toast("error", "Pushover rejected those keys", why)
 						return
 					end
-					tern.secrets.set("token", token):next(function(_, err, _)
+					save_creds(candidate, function(err, cx4)
+						local t = cx4 or target
 						if err ~= nil then
-							target:toast("error", "Pushover: saving to the keychain failed", err)
+							t:toast("error", "Pushover: saving to the keychain failed", err)
 							return
 						end
-						tern.secrets.set("user", user):next(function(_, err2, cx4)
-							local t = cx4 or target
-							if err2 ~= nil then
-								t:toast("error", "Pushover: saving to the keychain failed", err2)
-								return
-							end
-							creds = candidate
-							send_test(t)
-						end)
+						send_test(t)
 					end)
 				end)
 			end)
@@ -480,5 +533,8 @@ tern.command({
 
 -- Start ---------------------------------------------------------------------------------------------
 
-load_creds()
+load_creds(function()
+	creds_loaded = true
+	import_pending(nil)
+end)
 tern.timer(POLL_MS, timer_loop)

@@ -23,15 +23,18 @@ local SOURCE = fs.readFile(process.args[1] or "window.luau")
 
 type Scheduled = { due: number, fn: (any) -> (), hook: "timer" | "await" }
 
-local function harness()
+type Options = { secrets: { [string]: string }?, kv: { [string]: any }?, push_fails: string? }
+
+local function harness(opts: Options?)
+	local o: Options = opts or {}
 	local h = {
 		clock = 0,
 		queue = {} :: { Scheduled },
 		disabled = { timer = false, await = false },
 		handlers = {} :: { [string]: (any, any) -> () },
 		pushes = {} :: { { [string]: string } },
-		kv = {} :: { [string]: any },
-		secrets = { token = string.rep("t", 30), user = string.rep("u", 30) } :: { [string]: string },
+		kv = o.kv or {},
+		secrets = o.secrets or { token = string.rep("t", 30), user = string.rep("u", 30) },
 		agents = {} :: { any },
 		toasts = {} :: { string },
 	}
@@ -115,9 +118,14 @@ local function harness()
 				cb({ status = 0, stdout = '"HIDIdleTime" = 3600000000000', stderr = "", timed_out = false }, cx)
 			end,
 		},
-		fetch = function(_url: string, opts, cb)
-			table.insert(h.pushes, form_decode(opts.body))
-			cb({ status = 200, headers = {}, body = '{"status":1}', timed_out = false }, cx)
+		fetch = function(_url: string, req, cb)
+			table.insert(h.pushes, form_decode(req.body))
+			if o.push_fails ~= nil then
+				local body = serde.encode("json", { status = 0, errors = { o.push_fails } })
+				cb({ status = 400, headers = {}, body = body, timed_out = false }, cx)
+			else
+				cb({ status = 200, headers = {}, body = '{"status":1}', timed_out = false }, cx)
+			end
 		end,
 	}
 
@@ -226,6 +234,48 @@ test("a stalled timer poll restarts on sleep at the next window event", function
 	h.advance(3000)
 	eq(#h.pushes, 1, "pushes")
 	eq(h.pushes[1].message, "Which branch?", "message")
+end)
+
+local TOKEN, USER = string.rep("a", 30), string.rep("b", 30)
+
+test("installer keys move to the keychain, leave kv, and send a test push", function()
+	local h = harness({ secrets = {}, kv = { pending_keys = { token = TOKEN, user = USER } } })
+	eq(h.secrets.token, TOKEN, "token in keychain")
+	eq(h.secrets.user, USER, "user in keychain")
+	eq(h.kv.pending_keys, nil, "plain-text copy")
+	eq(#h.pushes, 1, "pushes")
+	eq(h.pushes[1].token, TOKEN, "test push token")
+	eq(h.pushes[1].user, USER, "test push user")
+	eq(h.kv.import_result.ok, true, "import result")
+end)
+
+test("keys the installer leaves while Tern runs are picked up by the next poll", function()
+	local h = harness({ secrets = {} })
+	h.advance(1000)
+	h.kv.pending_keys = { token = TOKEN, user = USER }
+	h.advance(1000)
+	eq(h.secrets.token, TOKEN, "token in keychain")
+	eq(h.kv.pending_keys, nil, "plain-text copy")
+	eq(h.kv.import_result.ok, true, "import result")
+end)
+
+test("a failed test push is reported back to the installer", function()
+	local h = harness({
+		secrets = {},
+		kv = { pending_keys = { token = TOKEN, user = USER } },
+		push_fails = "user key is invalid",
+	})
+	eq(h.kv.pending_keys, nil, "plain-text copy")
+	eq(h.kv.import_result.ok, false, "import result")
+	eq(h.kv.import_result.error, "user key is invalid", "error")
+end)
+
+test("malformed installer keys are dropped, not saved", function()
+	local h = harness({ secrets = {}, kv = { pending_keys = { token = "short", user = USER } } })
+	eq(h.secrets.token, nil, "token in keychain")
+	eq(h.kv.pending_keys, nil, "plain-text copy")
+	eq(h.kv.import_result.ok, false, "import result")
+	eq(#h.pushes, 0, "pushes")
 end)
 
 print(`{count - failures}/{count} passed`)
