@@ -152,19 +152,25 @@ local function deliver(msg: Message, done: ((why: string?, cx: WindowCx?) -> ())
 	end)
 end
 
--- Runs `fn` when the "when" setting allows a push now.
+-- Runs `fn` when the "when" setting allows a push now. Whenever idle time can't be read (an OS without
+-- a command, a failed or slow command), it pushes rather than lose the push.
 local function when_allowed(s: Settings, fn: () -> ())
-	if s.when == "always" or tern.runtime.os ~= "macos" then
+	local os_name = tern.runtime.os
+	local argv = idle.command(os_name)
+	if s.when == "always" or argv == nil then
 		fn()
 		return
 	end
-	tern.process.run(idle.ARGV, { timeout_ms = 2000 }, function(result, _)
-		local secs = idle.parse(result.stdout)
-		-- Unknown idle time: push rather than lose it.
+	-- PowerShell compiling its snippet takes a second or two, hence the long timeout.
+	local ok = pcall(tern.process.run, argv, { timeout_ms = 10000 }, function(result, _)
+		local secs = if result.status == 0 then idle.parse(os_name, result.stdout) else nil
 		if secs == nil or secs >= s.away_secs then
 			fn()
 		end
 	end)
+	if not ok then
+		fn()
+	end
 end
 
 -- The first window to claim `key` sends it; the others drop it.
@@ -582,7 +588,7 @@ tern.command({
 				},
 				{ label = "Long command means at least…", detail = `{s.command_min_secs}s`, id = "command_min_secs" },
 				{
-					label = "Only when I'm away from this Mac",
+					label = "Only when I'm away from this computer",
 					detail = if s.when == "away" then `on, after {s.away_secs}s idle` else "off",
 					current = s.when == "away",
 					id = "when",

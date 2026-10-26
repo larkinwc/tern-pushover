@@ -23,7 +23,15 @@ local SOURCE = fs.readFile(process.args[1] or "window.luau")
 
 type Scheduled = { due: number, fn: (any) -> (), hook: "timer" | "await" }
 
-type Options = { secrets: { [string]: string }?, kv: { [string]: any }?, push_fails: string? }
+-- `os` is tern.runtime.os (default macos); `idle` is what the idle command answers ({status, stdout}),
+-- by default an hour without input on macOS.
+type Options = {
+	secrets: { [string]: string }?,
+	kv: { [string]: any }?,
+	push_fails: string?,
+	os: string?,
+	idle: { status: number, stdout: string }?,
+}
 
 local function harness(opts: Options?)
 	local o: Options = opts or {}
@@ -38,6 +46,7 @@ local function harness(opts: Options?)
 		agents = {} :: { any },
 		toasts = {} :: { string },
 		commands = {} :: { string },
+		spawned = {} :: { { string } },
 	}
 	local cx = {
 		agents = {
@@ -72,7 +81,7 @@ local function harness(opts: Options?)
 		return out
 	end
 	local fake = {
-		runtime = { os = "macos", jit = false },
+		runtime = { os = o.os or "macos", jit = false },
 		now = function()
 			return h.clock
 		end,
@@ -117,9 +126,10 @@ local function harness(opts: Options?)
 			end,
 		},
 		process = {
-			run = function(_argv, _opts, cb)
-				-- An hour without input: away.
-				cb({ status = 0, stdout = '"HIDIdleTime" = 3600000000000', stderr = "", timed_out = false }, cx)
+			run = function(argv, _opts, cb)
+				table.insert(h.spawned, argv)
+				local answer = o.idle or { status = 0, stdout = '"HIDIdleTime" = 3600000000000' }
+				cb({ status = answer.status, stdout = answer.stdout, stderr = "", timed_out = false }, cx)
 			end,
 		},
 		fetch = function(_url: string, req, cb)
@@ -328,6 +338,30 @@ test("every push carries the link from the settings, and none once it's cleared"
 	h.kv.settings = { link_url = "" }
 	h.event("command_finished", { pane = 5, line = "make", status = 0, took_ms = 120000 })
 	eq(h.pushes[3].url, nil, "no link")
+end)
+
+local function make(h: any, pane: number)
+	h.event("command_finished", { pane = pane, line = "make", status = 0, took_ms = 120000 })
+end
+
+test("Windows: pushes when away, holds them at the desk, and pushes if the idle check fails", function()
+	local away = harness({ os = "windows", idle = { status = 0, stdout = "3600000\r\n" } })
+	make(away, 1)
+	eq(#away.pushes, 1, "away")
+	eq(away.spawned[1][1], "powershell.exe", "idle command")
+	local desk = harness({ os = "windows", idle = { status = 0, stdout = "1500\r\n" } })
+	make(desk, 1)
+	eq(#desk.pushes, 0, "at the desk")
+	local broken = harness({ os = "windows", idle = { status = 1, stdout = "" } })
+	make(broken, 1)
+	eq(#broken.pushes, 1, "idle check failed")
+end)
+
+test("Linux: no idle check, so it always pushes", function()
+	local h = harness({ os = "linux" })
+	make(h, 1)
+	eq(#h.pushes, 1, "pushes")
+	eq(#h.spawned, 0, "processes run")
 end)
 
 -- Two windows share one kv store and one keychain, like two Tern windows on the same Mac.

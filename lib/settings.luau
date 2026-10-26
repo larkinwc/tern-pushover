@@ -11,7 +11,7 @@ export type Settings = {
 	-- Push when a shell command that ran at least `command_min_secs` ends.
 	commands: boolean,
 	command_min_secs: number,
-	-- "always", or "away": only once this Mac has had no keyboard or mouse input for `away_secs`.
+	-- "always", or "away": only once this computer has had no keyboard or mouse input for `away_secs`.
 	when: string,
 	away_secs: number,
 	-- Pushover priority for "needs you" pushes (-2..1; 1 bypasses quiet hours).

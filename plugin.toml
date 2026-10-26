@@ -1,6 +1,6 @@
 schema = 1
 id = "pushover"
 name = "Pushover"
-version = "0.2.0"
+version = "0.3.0"
 description = "Pushover notifications on your phone when an agent needs you or finishes, or a long command ends."
 window = "window.luau"

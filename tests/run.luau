@@ -230,9 +230,14 @@ end)
 
 -- idle ------------------------------------------------------------------------------------------------
 
-test("idle time comes from HIDIdleTime nanoseconds", function()
-	eq(idle.parse('    |   "HIDIdleTime" = 2500000000\n'), 2.5)
-	eq(idle.parse("nothing here"), nil)
+test("idle time: macOS HIDIdleTime nanoseconds, Windows milliseconds, nothing elsewhere", function()
+	eq(idle.parse("macos", '    |   "HIDIdleTime" = 2500000000\n'), 2.5)
+	eq(idle.parse("macos", "nothing here"), nil)
+	eq(idle.parse("windows", "61500\r\n"), 61.5)
+	eq(idle.parse("windows", "Add-Type : error\r\n"), nil)
+	eq(idle.parse("linux", "123"), nil)
+	eq(idle.command("linux"), nil)
+	eq((idle.command("windows") :: { string })[1], "powershell.exe")
 end)
 
 print(`{count - failures}/{count} passed`)

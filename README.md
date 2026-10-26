@@ -6,31 +6,29 @@ A [Tern](https://stencil.so/tern) plugin that sends [Pushover](https://pushover.
 - an agent **finishes** its turn, or reports a failure,
 - a shell **command that ran a while** ends (60 s by default), with its exit status.
 
-By default it only pushes when you're **away**: the Mac has had no keyboard or mouse input for 60 seconds. At your desk, Tern's own banners do the job.
+By default it only pushes when you're **away**: no keyboard or mouse input for 60 seconds. At your desk, Tern's own banners do the job.
+
+Works wherever Tern does: macOS, Windows and Linux.
 
 ## Install
 
-You need a Pushover account and its app on your phone. Pushover is a one-time purchase per platform after a 30-day trial. Before you start, create an application at [pushover.net/apps/build](https://pushover.net/apps/build) (name it "Tern"; the icon is optional) so you have its **API token**. Your **user key** is at the top of [pushover.net](https://pushover.net).
+You need a Pushover account and its app on your phone. Pushover is a one-time purchase per platform after a 30-day trial. Create an application at [pushover.net/apps/build](https://pushover.net/apps/build) (name it "Tern"; the icon is optional) for its **API token**; your **user key** is at the top of [pushover.net](https://pushover.net).
 
-With Tern open, run:
+```sh
+tern plugin install github.com/larkinwc/tern-pushover
+```
+
+Then run **Pushover: Set up** in Tern's command palette and paste the token, then the user key. Pushover checks them, Tern saves them in the system's credential store, and a test notification goes to your phone.
+
+**Shortcut on macOS and Linux:** one command does both steps, with Tern open:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/larkinwc/tern-pushover/main/install.sh | sh
 ```
 
-The script:
+It installs (or updates) the plugin, asks for the token and user key (or reads `PUSHOVER_TOKEN` and `PUSHOVER_USER`), checks them with Pushover and hands them to Tern. Only Tern can write its own credential store, so the script leaves the keys in the plugin's data store (`plugin-data/pushover/kv.json`, readable only by you); the first Tern window to see them saves them properly, deletes that copy and sends the test notification.
 
-1. installs the plugin (`tern plugin install github.com/larkinwc/tern-pushover`);
-2. asks for the token and user key, and checks them with Pushover;
-3. hands them to Tern, which saves them in the keychain and sends a test notification to your phone.
-
-To skip the questions, set `PUSHOVER_TOKEN` and `PUSHOVER_USER` first. Run it again to update the plugin or change the keys.
-
-Only Tern can write its own keychain item, so the script leaves the keys in the plugin's data store (`plugin-data/pushover/kv.json`, readable only by you). The first Tern window to see them moves them to the keychain and deletes that copy, usually within a second. If no Tern window is open, they wait there until one starts.
-
-**By hand:** `tern plugin install github.com/larkinwc/tern-pushover`, then run **Pushover: Set up** in Tern's command palette and paste the token, then the user key.
-
-**Uninstall:** `tern plugin remove pushover`, and **Pushover: Settings → Forget my Pushover keys** first if you want the keys out of the keychain.
+**Uninstall:** `tern plugin remove pushover`, after **Pushover: Settings → Forget my Pushover keys** if you want the keys gone too.
 
 ## Commands
 
@@ -58,9 +56,9 @@ Everything runs in the plugin's window half, which every Tern window on the Mac 
 
 ### Limits
 
-- **A Tern window has to be open on the Mac.** A plugin's window half only runs in windows; the daemon alone doesn't run it. Plugins also can't read the keychain from the daemon side.
-- **Tern's 50 ms budget.** If one timer callback runs longer than 50 ms, Tern disables all of the plugin's timers until plugins reload. Listing agents takes 10–20 ms, and more while the Mac is busy, so this happens every so often. The plugin checks every 2 seconds to limit the exposure. A watchdog on other window events restarts a stalled check on `tern.sleep`, and if that stalls too, it runs **Reload plugins** itself (at most every 10 minutes; Tern can only reload all plugins at once) or, failing that, shows a toast. Finished and long-command pushes don't need the timers: they arrive on Tern events and have their own fallback.
-- **Away detection is macOS only.** On other systems it always pushes.
+- **A Tern window has to be open.** A plugin's window half only runs in windows; the daemon alone doesn't run it. Plugins also can't read the credential store from the daemon side.
+- **Tern's 50 ms budget.** If one timer callback runs longer than 50 ms, Tern disables all of the plugin's timers until plugins reload. Listing agents takes 10–20 ms, and more while the computer is busy, so this happens every so often. The plugin checks every 2 seconds to limit the exposure. A watchdog on other window events restarts a stalled check on `tern.sleep`, and if that stalls too, it runs **Reload plugins** itself (at most every 10 minutes; Tern can only reload all plugins at once) or, failing that, shows a toast. Finished and long-command pushes don't need the timers: they arrive on Tern events and have their own fallback.
+- **Away detection** reads idle time with `ioreg` on macOS and `GetLastInputInfo` (through PowerShell) on Windows. Linux has no single way to ask, so there it always pushes, and so does any system where the check fails.
 - **Repeats within 10 seconds** of the same event in the same pane are dropped.
 
 ## Development
