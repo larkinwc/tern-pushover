@@ -19,9 +19,10 @@ if tern.runtime.os == "ios" then
 	return
 end
 
--- Each `cx.agents:list()` costs ~10-20 ms, and one tick over Tern's 50 ms budget disables the plugin's
--- timers, so the poll stays slow (see lib/watchdog).
-local POLL_MS = 1000
+-- Each `cx.agents:list()` costs ~10-20 ms (more when the Mac is busy), and one tick over Tern's 50 ms
+-- budget disables all of the plugin's timers, so the poll runs every 2 s to limit the exposure
+-- (see lib/watchdog).
+local POLL_MS = 2000
 local STALL_MS = 10 * POLL_MS
 -- How long a finished turn waits for a poll to send it with the final message before sending anyway.
 local FLUSH_MS = 3 * POLL_MS

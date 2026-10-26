@@ -228,10 +228,10 @@ test("a stalled timer poll restarts on sleep at the next window event", function
 	h.agent("working", "")
 	h.advance(2000)
 	h.disabled.timer = true
-	h.advance(15000)
+	h.advance(25000) -- past the 20 s stall limit
 	h.event("title", { pane = 7, title = "omp" })
 	h.agent("waiting_input", "Which branch?")
-	h.advance(3000)
+	h.advance(5000)
 	eq(#h.pushes, 1, "pushes")
 	eq(h.pushes[1].message, "Which branch?", "message")
 end)
