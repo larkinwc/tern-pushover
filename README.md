@@ -55,7 +55,7 @@ Everything runs in the plugin's window half, which every Tern window on the Mac 
 ### Limits
 
 - **A Tern window has to be open on the Mac.** A plugin's window half only runs in windows; the daemon alone doesn't run it. Plugins also can't read the keychain from the daemon side.
-- **Tern's 50 ms budget.** If one timer callback runs longer than 50 ms, Tern disables all of the plugin's timers until plugins reload. Listing agents takes 10–20 ms, and more while the Mac is busy, so this does happen now and then. The plugin checks every 2 seconds to limit the exposure, and a watchdog on other window events restarts a stalled check on `tern.sleep`. If that stalls too, a toast says so; run **Reload plugins** to restart it. Finished and long-command pushes don't need the timers: they arrive on Tern events and have their own fallback.
+- **Tern's 50 ms budget.** If one timer callback runs longer than 50 ms, Tern disables all of the plugin's timers until plugins reload. Listing agents takes 10–20 ms, and more while the Mac is busy, so this happens every so often. The plugin checks every 2 seconds to limit the exposure. A watchdog on other window events restarts a stalled check on `tern.sleep`, and if that stalls too, it runs **Reload plugins** itself (at most every 10 minutes; Tern can only reload all plugins at once) or, failing that, shows a toast. Finished and long-command pushes don't need the timers: they arrive on Tern events and have their own fallback.
 - **Away detection is macOS only.** On other systems it always pushes.
 - **Repeats within 10 seconds** of the same event in the same pane are dropped.
 

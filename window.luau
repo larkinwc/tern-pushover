@@ -26,6 +26,8 @@ local POLL_MS = 2000
 local STALL_MS = 10 * POLL_MS
 -- How long a finished turn waits for a poll to send it with the final message before sending anyway.
 local FLUSH_MS = 3 * POLL_MS
+-- Self-healing reloads every plugin, so it runs at most this often.
+local HEAL_EVERY_SECS = 600
 local ERROR_TOAST_EVERY_SECS = 300
 
 local detector = detect.new()
@@ -261,27 +263,41 @@ local function sleep_loop()
 	end)
 end
 
--- Called from other hooks: restarts a stalled poll, or says so once when it can't.
+-- Called from other hooks: picks up installer keys, and restarts a stalled poll.
 local function check_poll(cx: WindowCx)
+	if creds_loaded then
+		import_pending(cx)
+	end
 	local action = watchdog.check(dog, tern.now())
 	if action == "sleep" then
 		tern.log.warn("pushover: the agent poll stalled; restarting it")
 		sleep_loop()
-	elseif action == "dead" then
-		tern.log.warn("pushover: the agent poll stalled twice; needs-you pushes are off until plugins reload")
-		cx:toast(
-			"error",
-			"Pushover: needs-you pushes stopped",
-			"Tern stopped the plugin's agent check. Run “Reload plugins” to restart it."
-		)
+		return
+	elseif action ~= "dead" then
+		return
 	end
-	if action == "dead" then
-		local s = settings()
-		for pane, result in finished do
-			send_finished(pane, result, s)
-		end
-		table.clear(finished)
+	-- Both hooks are disabled. Send what's waiting before anything else, since a reload drops it.
+	local s = settings()
+	for pane, result in finished do
+		send_finished(pane, result, s)
 	end
+	table.clear(finished)
+	-- Only a plugin reload re-enables them, and Tern can only reload every plugin at once,
+	-- so this happens at most every HEAL_EVERY_SECS across all windows.
+	local now = os.time()
+	local ok, last = pcall(tern.kv.get, "last_heal")
+	if not (ok and type(last) == "number" and now - last < HEAL_EVERY_SECS) then
+		pcall(tern.kv.set, "last_heal", now)
+		tern.log.warn("pushover: the agent poll stalled twice; reloading plugins to restart it")
+		cx:command("reload_plugins")
+		return
+	end
+	tern.log.warn("pushover: the agent poll stalled twice; needs-you pushes are off until plugins reload")
+	cx:toast(
+		"error",
+		"Pushover: needs-you pushes stopped",
+		"Tern keeps stopping the plugin's agent check. Run “Reload plugins” to restart it."
+	)
 end
 
 local function flush_finished(pane: number)

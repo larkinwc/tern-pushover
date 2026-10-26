@@ -37,6 +37,7 @@ local function harness(opts: Options?)
 		secrets = o.secrets or { token = string.rep("t", 30), user = string.rep("u", 30) },
 		agents = {} :: { any },
 		toasts = {} :: { string },
+		commands = {} :: { string },
 	}
 	local cx = {
 		agents = {
@@ -46,6 +47,9 @@ local function harness(opts: Options?)
 		},
 		toast = function(_, _, text)
 			table.insert(h.toasts, text)
+		end,
+		command = function(_, id: string)
+			table.insert(h.commands, id)
 		end,
 	}
 	local function schedule(ms: number, hook: "timer" | "await", fn: (any) -> ())
@@ -276,6 +280,40 @@ test("malformed installer keys are dropped, not saved", function()
 	eq(h.kv.pending_keys, nil, "plain-text copy")
 	eq(h.kv.import_result.ok, false, "import result")
 	eq(#h.pushes, 0, "pushes")
+end)
+
+test("with both hooks disabled, the next window event reloads plugins, at most every 10 minutes", function()
+	local kv = {}
+	local h = harness({ kv = kv })
+	h.agent("working", "")
+	h.advance(2000)
+	h.disabled.timer = true
+	h.advance(25000)
+	h.event("title", { pane = 7, title = "omp" }) -- moves to sleep
+	h.disabled.await = true
+	h.advance(25000)
+	h.event("title", { pane = 7, title = "omp" })
+	eq(#h.commands, 1, "reloads")
+	eq(h.commands[1], "reload_plugins", "command")
+	-- The reload gives a fresh window half; if it stalls again right away, don't reload again.
+	local again = harness({ kv = kv })
+	again.disabled.timer, again.disabled.await = true, true
+	again.advance(25000)
+	again.event("title", { pane = 7, title = "omp" })
+	again.advance(25000)
+	again.event("title", { pane = 7, title = "omp" })
+	eq(#again.commands, 0, "reloads within 10 minutes")
+	eq(#again.toasts, 1, "toast instead")
+end)
+
+test("installer keys are picked up on window events even when the poll is dead", function()
+	local h = harness({ secrets = {} })
+	h.disabled.timer, h.disabled.await = true, true
+	h.advance(5000)
+	h.kv.pending_keys = { token = TOKEN, user = USER }
+	h.event("focus", { pane = 7, tab = 1 })
+	eq(h.kv.pending_keys, nil, "plain-text copy")
+	eq(h.kv.import_result.ok, true, "import result")
 end)
 
 -- Two windows share one kv store and one keychain, like two Tern windows on the same Mac.
