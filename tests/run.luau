@@ -117,6 +117,24 @@ end)
 
 -- settings --------------------------------------------------------------------------------------------
 
+test("a link adds url and url_title; an empty link adds neither", function()
+	local creds = { token = "t", user = "u" }
+	eq(
+		pushover.body(creds, { title = "T", message = "M", url = "tern://", url_title = "Open Tern" }),
+		"token=t&user=u&title=T&message=M&url=tern%3A%2F%2F&url_title=Open%20Tern"
+	)
+	eq(pushover.body(creds, { title = "T", message = "M", url = "", url_title = "Open Tern" }), "token=t&user=u&title=T&message=M")
+end)
+
+test("the link defaults to tern://, may be cleared, and rejects spaces and empty labels", function()
+	eq(settings.merge(nil).link_url, "tern://")
+	eq(settings.merge(nil).link_title, "Open Tern")
+	eq(settings.merge({ link_url = "" }).link_url, "")
+	eq(settings.merge({ link_url = "https://mac.ts.net:8377/" }).link_url, "https://mac.ts.net:8377/")
+	eq(settings.merge({ link_url = "tern:// x" }).link_url, "tern://")
+	eq(settings.merge({ link_title = "" }).link_title, "Open Tern")
+end)
+
 test("settings fall back per field on missing or invalid values", function()
 	local s = settings.merge({
 		done = false,

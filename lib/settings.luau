@@ -16,6 +16,9 @@ export type Settings = {
 	away_secs: number,
 	-- Pushover priority for "needs you" pushes (-2..1; 1 bypasses quiet hours).
 	needs_you_priority: number,
+	-- A link button on every push ("" for none) and its label. `tern://` opens Tern's app.
+	link_url: string,
+	link_title: string,
 }
 
 local M = {}
@@ -29,6 +32,8 @@ local DEFAULTS: Settings = {
 	when = "away",
 	away_secs = 60,
 	needs_you_priority = 0,
+	link_url = "tern://",
+	link_title = "Open Tern",
 }
 M.DEFAULTS = DEFAULTS
 
@@ -61,6 +66,12 @@ function M.merge(stored: any): Settings
 		away_secs = pick(s.away_secs, d.away_secs, nonnegative),
 		needs_you_priority = pick(s.needs_you_priority, d.needs_you_priority, function(v)
 			return v == math.floor(v) and v >= -2 and v <= 1
+		end),
+		link_url = pick(s.link_url, d.link_url, function(v)
+			return #v <= 512 and string.find(v, "%s") == nil
+		end),
+		link_title = pick(s.link_title, d.link_title, function(v)
+			return v ~= "" and #v <= 100
 		end),
 	}
 end

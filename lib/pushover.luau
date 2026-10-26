@@ -9,6 +9,7 @@ M.VALIDATE_URL = "https://api.pushover.net/1/users/validate.json"
 
 local TITLE_MAX = 250
 local MESSAGE_MAX = 1024
+local URL_TITLE_MAX = 100
 
 -- Percent-encodes everything but RFC 3986 unreserved characters.
 function M.escape(s: string): string
@@ -41,7 +42,8 @@ function M.truncate(s: string, max: number): string
 end
 
 export type Credentials = { token: string, user: string }
-export type Message = { title: string, message: string, priority: number? }
+-- `url`/`url_title`: a link shown as a button under the message ("" or nil for none).
+export type Message = { title: string, message: string, priority: number?, url: string?, url_title: string? }
 
 function M.body(creds: Credentials, msg: Message): string
 	local text = if msg.message == "" then " " else msg.message
@@ -53,6 +55,12 @@ function M.body(creds: Credentials, msg: Message): string
 	}
 	if msg.priority ~= nil and msg.priority ~= 0 then
 		table.insert(fields, { "priority", tostring(msg.priority) })
+	end
+	if msg.url ~= nil and msg.url ~= "" then
+		table.insert(fields, { "url", msg.url })
+		if msg.url_title ~= nil and msg.url_title ~= "" then
+			table.insert(fields, { "url_title", M.truncate(msg.url_title, URL_TITLE_MAX) })
+		end
 	end
 	return M.form(fields)
 end

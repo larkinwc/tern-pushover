@@ -39,9 +39,13 @@ Only Tern can write its own keychain item, so the script leaves the keys in the 
 | Pushover: Set up | Enter, check and save your keys, then send a test |
 | Pushover: Send test notification | Send a test now, ignoring the away and pause settings |
 | Pushover: Pause or resume notifications | Stop or restart all pushes |
-| Pushover: Settings | Turn each kind of push on or off; set the long-command and away thresholds; let needs-you pushes through quiet hours (Pushover priority 1); forget your keys |
+| Pushover: Settings | Turn each kind of push on or off; set the long-command and away thresholds; let needs-you pushes through quiet hours (Pushover priority 1); set or clear the link on each push and its label; forget your keys |
 
 Settings live in the plugin's `kv.json` (in Tern's `plugin-data/pushover`); your keys don't. They're in the system keychain.
+
+### Getting back to Tern from a push
+
+Tapping a Pushover notification opens the Pushover app; iOS doesn't let it open another app directly. So every push carries an **Open Tern** button with the link `tern://`, which opens Tern's iPhone app: notification → **Open Tern**. Point it elsewhere under **Pushover: Settings → Link on each push…**, for example your Tern web client's address (`tern web serve`), or clear it to drop the button. Tern has no links to a particular session yet, so the button opens the app, not the agent.
 
 ## How it works
 

@@ -139,6 +139,10 @@ local function deliver(msg: Message, done: ((why: string?, cx: WindowCx?) -> ())
 		end
 		return
 	end
+	local s = settings()
+	if msg.url == nil then
+		msg.url, msg.url_title = s.link_url, s.link_title
+	end
 	post(pushover.MESSAGES_URL, pushover.body(c, msg), function(why, cx)
 		if done ~= nil then
 			done(why, cx)
@@ -515,6 +519,48 @@ local function ask_seconds(cx: WindowCx, placeholder: string, current: number, a
 	end)
 end
 
+local function ask_link(cx: WindowCx, s: Settings)
+	cx:prompt({
+		value = s.link_url,
+		placeholder = "Link on each push, e.g. tern:// (empty for none)",
+		icon = "link",
+	}):next(function(value, _, fresh)
+		local target = fresh or cx
+		if value == nil then
+			return
+		end
+		local url = string.match(value, "^%s*(.-)%s*$") :: string
+		if string.find(url, "%s") ~= nil or #url > 512 then
+			target:toast("error", "Pushover: links can't contain spaces or exceed 512 characters")
+			return
+		end
+		local t = settings()
+		t.link_url = url
+		save(t)
+		target:toast("success", "Pushover: saved", if url == "" then "Pushes have no link" else url)
+	end)
+end
+
+local function ask_link_title(cx: WindowCx, s: Settings)
+	cx:prompt({ value = s.link_title, placeholder = "Label of the link button", icon = "link" }):next(
+		function(value, _, fresh)
+			local target = fresh or cx
+			if value == nil then
+				return
+			end
+			local title = string.match(value, "^%s*(.-)%s*$") :: string
+			if title == "" or #title > 100 then
+				target:toast("error", "Pushover: the label needs 1 to 100 characters")
+				return
+			end
+			local t = settings()
+			t.link_title = title
+			save(t)
+			target:toast("success", "Pushover: saved", title)
+		end
+	)
+end
+
 tern.command({
 	id = "settings",
 	title = "Pushover: Settings",
@@ -548,6 +594,12 @@ tern.command({
 					current = s.needs_you_priority == 1,
 					id = "priority",
 				},
+				{
+					label = "Link on each push…",
+					detail = if s.link_url == "" then "none" else s.link_url,
+					id = "link_url",
+				},
+				{ label = "Link label…", detail = s.link_title, id = "link_title" },
 				{ label = "Forget my Pushover keys", id = "forget" },
 			},
 		}):next(function(item, _, fresh)
@@ -565,6 +617,12 @@ tern.command({
 				ask_seconds(target, "Seconds without input before you count as away", s.away_secs, function(t, n)
 					t.away_secs = n
 				end)
+				return
+			elseif id == "link_url" then
+				ask_link(target, s)
+				return
+			elseif id == "link_title" then
+				ask_link_title(target, s)
 				return
 			elseif id == "forget" then
 				tern.secrets.set("token", nil):next(function()

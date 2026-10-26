@@ -316,6 +316,20 @@ test("installer keys are picked up on window events even when the poll is dead",
 	eq(h.kv.import_result.ok, true, "import result")
 end)
 
+test("every push carries the link from the settings, and none once it's cleared", function()
+	local h = harness()
+	h.event("command_finished", { pane = 3, line = "make", status = 0, took_ms = 120000 })
+	eq(h.pushes[1].url, "tern://", "default link")
+	eq(h.pushes[1].url_title, "Open Tern", "default label")
+	h.kv.settings = { link_url = "https://mac.example.ts.net:8377/", link_title = "Open session" }
+	h.event("command_finished", { pane = 4, line = "make", status = 0, took_ms = 120000 })
+	eq(h.pushes[2].url, "https://mac.example.ts.net:8377/", "custom link")
+	eq(h.pushes[2].url_title, "Open session", "custom label")
+	h.kv.settings = { link_url = "" }
+	h.event("command_finished", { pane = 5, line = "make", status = 0, took_ms = 120000 })
+	eq(h.pushes[3].url, nil, "no link")
+end)
+
 -- Two windows share one kv store and one keychain, like two Tern windows on the same Mac.
 local function long_command(h: any)
 	h.event("command_finished", { pane = 3, line = "make test", status = 0, took_ms = 120000 })
