@@ -273,20 +273,8 @@ local function sleep_loop()
 	end)
 end
 
--- Called from other hooks: picks up installer keys, and restarts a stalled poll.
-local function check_poll(cx: WindowCx)
-	if creds_loaded then
-		import_pending(cx)
-	end
-	local action = watchdog.check(dog, tern.now())
-	if action == "sleep" then
-		tern.log.warn("pushover: the agent poll stalled; restarting it")
-		sleep_loop()
-		return
-	elseif action ~= "dead" then
-		return
-	end
-	-- Both hooks are disabled. Send what's waiting before anything else, since a reload drops it.
+-- Both hooks are disabled: sends what's waiting, then reloads plugins (true) or says it can't (false).
+local function heal(cx: WindowCx): boolean
 	local s = settings()
 	for pane, result in finished do
 		send_finished(pane, result, s)
@@ -300,7 +288,7 @@ local function check_poll(cx: WindowCx)
 		pcall(tern.kv.set, "last_heal", now)
 		tern.log.warn("pushover: the agent poll stalled twice; reloading plugins to restart it")
 		cx:command("reload_plugins")
-		return
+		return true
 	end
 	tern.log.warn("pushover: the agent poll stalled twice; needs-you pushes are off until plugins reload")
 	cx:toast(
@@ -308,6 +296,21 @@ local function check_poll(cx: WindowCx)
 		"Pushover: needs-you pushes stopped",
 		"Tern keeps stopping the plugin's agent check. Run “Reload plugins” to restart it."
 	)
+	return false
+end
+
+-- Called from other hooks: restarts a stalled poll, and picks up installer keys.
+local function check_poll(cx: WindowCx)
+	local action = watchdog.check(dog, tern.now())
+	if action == "sleep" then
+		tern.log.warn("pushover: the agent poll stalled; restarting it")
+		sleep_loop()
+	elseif action == "dead" and heal(cx) then
+		return -- the reloaded plugin imports any pending keys at startup
+	end
+	if creds_loaded then
+		import_pending(cx)
+	end
 end
 
 local function flush_finished(pane: number)
@@ -402,15 +405,28 @@ local function save_creds(candidate: Credentials, done: (err: string?, cx: Windo
 end
 
 -- install.sh checks the keys with Pushover, then leaves them in kv "pending_keys", since only Tern
--- can write its keychain. The first window to see them moves them to the keychain, deletes the
--- plain-text copy, sends a test push and reports the outcome in kv "import_result" for the script.
+-- can write its keychain. A window moves them to the keychain and only then deletes the plain-text
+-- copy, sends a test push and reports the outcome in kv "import_result" for the script. Should the
+-- keychain callbacks never run (Tern disabled the plugin's `await` hook), the keys stay pending and
+-- the next attempt, at the latest after the plugin reloads, picks them up again.
 import_pending = function(cx: WindowCx?)
 	local ok, pending = pcall(tern.kv.get, "pending_keys")
+	-- The claim keeps windows from importing at once, and spaces out retries by dedupe.WINDOW_SECS.
 	if not ok or pending == nil or not claim("import") then
 		return
 	end
-	pcall(tern.kv.set, "pending_keys", nil)
-	local function result(why: string?)
+	-- Deletes the copy we handled, unless the installer has since left different keys.
+	local function drop_copy()
+		local ok2, now = pcall(tern.kv.get, "pending_keys")
+		local same = type(now) == "table"
+			and type(pending) == "table"
+			and now.token == pending.token
+			and now.user == pending.user
+		if ok2 and (same or type(pending) ~= "table") then
+			pcall(tern.kv.set, "pending_keys", nil)
+		end
+	end
+	local function report(why: string?)
 		pcall(tern.kv.set, "import_result", { ok = why == nil, error = why, at = os.time() })
 	end
 	local token = if type(pending) == "table" then pending.token else nil
@@ -421,15 +437,17 @@ import_pending = function(cx: WindowCx?)
 		or not pushover.looks_like_key(token)
 		or not pushover.looks_like_key(user)
 	then
-		result("the installer left malformed keys")
+		drop_copy()
+		report("the installer left malformed keys")
 		return
 	end
 	save_creds({ token = token, user = user }, function(err, fresh)
+		drop_copy()
 		if err ~= nil then
-			result("saving to the keychain failed: " .. err)
+			report("saving to the keychain failed: " .. err)
 			return
 		end
-		send_test(fresh or cx, result)
+		send_test(fresh or cx, report)
 	end)
 end
 

@@ -24,19 +24,22 @@ local SOURCE = fs.readFile(process.args[1] or "window.luau")
 type Scheduled = { due: number, fn: (any) -> (), hook: "timer" | "await" }
 
 -- `os` is tern.runtime.os (default macos); `idle` is what the idle command answers ({status, stdout}),
--- by default an hour without input on macOS.
+-- by default an hour without input on macOS. `start` sets the fake clock (ms), which os.time follows,
+-- so a second harness can stand for the same plugin reloaded later.
 type Options = {
 	secrets: { [string]: string }?,
 	kv: { [string]: any }?,
 	push_fails: string?,
 	os: string?,
 	idle: { status: number, stdout: string }?,
+	start: number?,
 }
 
 local function harness(opts: Options?)
 	local o: Options = opts or {}
 	local h = {
-		clock = 0,
+		clock = o.start or 0,
+		seq = 0,
 		queue = {} :: { Scheduled },
 		disabled = { timer = false, await = false },
 		handlers = {} :: { [string]: (any, any) -> () },
@@ -62,12 +65,17 @@ local function harness(opts: Options?)
 		end,
 	}
 	local function schedule(ms: number, hook: "timer" | "await", fn: (any) -> ())
-		table.insert(h.queue, { due = h.clock + ms, fn = fn, hook = hook })
+		h.seq += 1
+		table.insert(h.queue, { due = h.clock + ms, seq = h.seq, fn = fn, hook = hook })
 	end
+	-- Tern does the operation itself, then runs the callback on the plugin's `await` hook,
+	-- which it may have disabled.
 	local function resolved(value: any)
 		return {
 			next = function(_, fn)
-				fn(value, nil, cx)
+				schedule(0, "await", function(c)
+					fn(value, nil, c)
+				end)
 			end,
 		}
 	end
@@ -150,16 +158,21 @@ local function harness(opts: Options?)
 			require = function(path: string)
 				return assert(LIBS[path], "unexpected require " .. path)
 			end,
+			os = setmetatable({
+				time = function()
+					return 1e9 + h.clock // 1000
+				end,
+			}, { __index = os }),
 		},
 	})
 	entry()
 
-	-- Moves the clock forward, running what comes due on hooks Tern hasn't disabled.
+	-- Moves the clock forward, running what comes due (in order) on hooks Tern hasn't disabled.
 	function h.advance(ms: number)
 		local target = h.clock + ms
 		while true do
 			table.sort(h.queue, function(a, b)
-				return a.due < b.due
+				return a.due < b.due or (a.due == b.due and a.seq < b.seq)
 			end)
 			local first = h.queue[1]
 			if first == nil or first.due > target then
@@ -174,10 +187,14 @@ local function harness(opts: Options?)
 		h.clock = target
 	end
 
+	-- A window event; Tern then runs whatever callbacks became due.
 	function h.event(name: string, payload: any)
 		local fn = assert(h.handlers[name], "no handler for " .. name)
 		fn(payload, cx)
+		h.advance(0)
 	end
+
+	h.advance(0) -- startup's keychain reads
 
 	function h.agent(state: string, last: string)
 		h.agents = { { pane = 7, state = state, cwd = "/work/app", command = "omp", last_message = last } }
@@ -316,14 +333,49 @@ test("with both hooks disabled, the next window event reloads plugins, at most e
 	eq(#again.toasts, 1, "toast instead")
 end)
 
-test("installer keys are picked up on window events even when the poll is dead", function()
+test("installer keys are picked up on window events while only the timers are disabled", function()
 	local h = harness({ secrets = {} })
-	h.disabled.timer, h.disabled.await = true, true
+	h.disabled.timer = true
 	h.advance(5000)
 	h.kv.pending_keys = { token = TOKEN, user = USER }
 	h.event("focus", { pane = 7, tab = 1 })
+	eq(h.secrets.token, TOKEN, "token in keychain")
 	eq(h.kv.pending_keys, nil, "plain-text copy")
 	eq(h.kv.import_result.ok, true, "import result")
+end)
+
+test("installer keys survive a disabled await hook and are imported after the reload", function()
+	local kv, secrets = {}, {}
+	local h = harness({ kv = kv, secrets = secrets })
+	h.disabled.timer, h.disabled.await = true, true
+	kv.pending_keys = { token = TOKEN, user = USER }
+	h.event("focus", { pane = 7, tab = 1 }) -- the import starts; its keychain callbacks never run
+	eq(kv.pending_keys ~= nil, true, "plain-text copy kept")
+	eq(kv.import_result, nil, "no result yet")
+	-- Plugins reload (or Tern restarts) a little later: a fresh window half on the same kv and keychain.
+	local reloaded = harness({ kv = kv, secrets = secrets, start = h.clock + 15000 })
+	eq(secrets.token, TOKEN, "token in keychain")
+	eq(secrets.user, USER, "user in keychain")
+	eq(kv.pending_keys, nil, "plain-text copy")
+	eq(kv.import_result.ok, true, "import result")
+	eq(#reloaded.pushes, 1, "test push")
+end)
+
+test("with both hooks dead, a window event reloads plugins before touching installer keys", function()
+	local kv = {}
+	local h = harness({ kv = kv, secrets = {} })
+	h.agent("working", "")
+	h.advance(2000)
+	h.disabled.timer = true
+	h.advance(25000)
+	h.event("title", { pane = 7, title = "omp" })
+	h.disabled.await = true
+	h.advance(25000)
+	kv.pending_keys = { token = TOKEN, user = USER }
+	h.event("title", { pane = 7, title = "omp" })
+	eq(h.commands[1], "reload_plugins", "reload")
+	eq((kv.recent or {}).import, nil, "import not attempted")
+	eq(kv.pending_keys ~= nil, true, "plain-text copy kept for the reloaded plugin")
 end)
 
 test("every push carries the link from the settings, and none once it's cleared", function()
