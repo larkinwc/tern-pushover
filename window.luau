@@ -23,6 +23,8 @@ end
 -- timers, so the poll stays slow (see lib/watchdog).
 local POLL_MS = 1000
 local STALL_MS = 10 * POLL_MS
+-- How long a finished turn waits for a poll to send it with the final message before sending anyway.
+local FLUSH_MS = 3 * POLL_MS
 local ERROR_TOAST_EVERY_SECS = 300
 
 local detector = detect.new()
@@ -234,18 +236,33 @@ local function check_poll(cx: WindowCx)
 	end
 end
 
+local function flush_finished(pane: number)
+	local result = finished[pane]
+	if result == nil then
+		return
+	end
+	finished[pane] = nil
+	send_finished(pane, result, settings())
+end
+
 tern.on("agent_finished", function(ev: AgentFinishedEvent, cx: WindowCx)
 	if ev.result ~= "done" and ev.result ~= "failed" then
 		return
 	end
-	local s = settings()
-	if not s.done then
+	if not settings().done then
 		return
 	end
-	if dog.driver == "dead" then
-		send_finished(ev.pane, ev.result, s)
+	finished[ev.pane] = ev.result
+	if dog.driver == "timer" then
+		-- The next poll sends it with the agent's final message. Should the timers have been disabled,
+		-- this fallback on the separate `await` hook sends it with the last snapshot's message instead.
+		local pane = ev.pane
+		tern.sleep(FLUSH_MS):next(function()
+			flush_finished(pane)
+		end)
 	else
-		finished[ev.pane] = ev.result
+		-- The poll already moved to (or lost) the `await` hook, so a fallback there could be lost with it.
+		flush_finished(ev.pane)
 	end
 	check_poll(cx)
 end)

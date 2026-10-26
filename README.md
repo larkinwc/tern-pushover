@@ -38,14 +38,14 @@ Settings live in the plugin's `kv.json` (in Tern's `plugin-data/pushover`); your
 Everything runs in the plugin's window half, which every Tern window on the Mac runs:
 
 - **Needs you:** checks `cx.agents:list()` once a second and pushes on `working → waiting_input`, the same check [tern-chime](https://github.com/H4vC/tern-chime) uses.
-- **Finished:** Tern's `agent_finished` event. The push goes out on the next check so it carries the agent's final message, and is skipped when the turn ended on a question, since the needs-you push covers that.
+- **Finished:** Tern's `agent_finished` event. The next check sends it with the agent's final message. If no check runs within 3 seconds (say Tern disabled the timers), a fallback on the separate `tern.sleep` hook sends it with the last message seen. It's skipped when the turn ended on a question, since the needs-you push covers that.
 - **Long commands:** Tern's `command_finished` event. An agent's own program exiting doesn't count.
 - **Several windows:** each one sees every event. They share the plugin's kv store, and the first to claim an event sends it.
 
 ### Limits
 
 - **A Tern window has to be open on the Mac.** A plugin's window half only runs in windows; the daemon alone doesn't run it. Plugins also can't read the keychain from the daemon side.
-- **Tern's 50 ms budget.** If one timer callback runs longer than 50 ms, Tern disables all of the plugin's timers until plugins reload, and listing agents takes 10–20 ms. So the plugin checks once a second rather than four times, and a watchdog on other events restarts a stalled check on `tern.sleep`. If that stalls too, a toast says so; run **Reload plugins** to restart it. Finished and long-command pushes don't depend on the check and keep working.
+- **Tern's 50 ms budget.** If one timer callback runs longer than 50 ms, Tern disables all of the plugin's timers until plugins reload, and listing agents takes 10–20 ms. So the plugin checks once a second rather than four times, and a watchdog on other events restarts a stalled check on `tern.sleep`. If that stalls too, a toast says so; run **Reload plugins** to restart it. Finished and long-command pushes don't need the timers: they arrive on Tern events and have their own fallback.
 - **Away detection is macOS only.** On other systems it always pushes.
 - **Repeats within 10 seconds** of the same event in the same pane are dropped.
 
@@ -55,6 +55,7 @@ Everything runs in the plugin's window half, which every Tern window on the Mac 
 tern plugin link .            # use this checkout; saving a file reloads the plugin
 tern plugin types .           # writes tern.d.luau for luau-lsp (git-ignored)
 luau tests/run.luau           # unit tests for lib/ (brew install luau)
+lune run tests/window.luau    # window.luau against a fake tern, incl. disabled timers (brew install lune)
 luau-lsp analyze --platform=standard --definitions=@tern=tern.d.luau window.luau lib/*.luau
 ```
 
