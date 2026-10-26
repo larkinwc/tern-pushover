@@ -39,7 +39,7 @@ It installs (or updates) the plugin, asks for the token and user key (or reads `
 | Pushover: Pause or resume notifications | Stop or restart all pushes |
 | Pushover: Settings | Turn each kind of push on or off; set the long-command and away thresholds; let needs-you pushes through quiet hours (Pushover priority 1); set or clear the link on each push and its label; forget your keys |
 
-Settings live in the plugin's `kv.json` (in Tern's `plugin-data/pushover`); your keys don't. They're in the system keychain.
+Settings live in the plugin's `kv.json` (in Tern's `plugin-data/pushover`); your keys don't. They're in the system's credential store, through Tern.
 
 ### Getting back to Tern from a push
 
@@ -47,7 +47,7 @@ Tapping a Pushover notification opens the Pushover app; iOS doesn't let it open 
 
 ## How it works
 
-Everything runs in the plugin's window half, which every Tern window on the Mac runs:
+Everything runs in the plugin's window half, which every Tern window on the computer runs:
 
 - **Needs you:** checks `cx.agents:list()` every 2 seconds and pushes on `working → waiting_input`, the same check [tern-chime](https://github.com/H4vC/tern-chime) uses.
 - **Finished:** Tern's `agent_finished` event. The next check sends it with the agent's final message. If no check runs within 6 seconds (say Tern disabled the timers), a fallback on the separate `tern.sleep` hook sends it with the last message seen. It's skipped when the turn ended on a question, since the needs-you push covers that.
